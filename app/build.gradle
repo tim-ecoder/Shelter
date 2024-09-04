@@ -2,11 +2,7 @@ apply plugin: 'com.android.application'
 
 repositories {
     //noinspection JcenterRepositoryObsolete
-    jcenter {
-        content {
-            includeVersion "mobi.upod", "time-duration-picker", "1.1.3"
-        }
-    }
+    maven { url 'https://jitpack.io' }
 }
 
 def getVersionCode = { ->
@@ -38,26 +34,56 @@ def getVersionName = { ->
 }
 
 android {
+    signingConfigs {
+        debug {
+            storeFile file('d:\\Programming\\keystores\\keystore2.jks')
+            storePassword 'qwerty'
+            keyAlias 'key0'
+            keyPassword 'qwerty'
+        }
+        release {
+            storeFile file('d:\\Programming\\keystores\\keystore2.jks')
+            storePassword 'qwerty'
+            keyAlias 'key0'
+            keyPassword 'qwerty'
+        }
+    }
+
     compileSdk 34
     buildToolsVersion = '34.0.0'
     defaultConfig {
         applicationId "net.typeblog.shelter"
-        minSdkVersion 24
-        targetSdkVersion 34
-        versionCode getVersionCode()
-        versionName getVersionName()
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        minSdkVersion 28
+        //noinspection ExpiredTargetSdkVersion
+        targetSdkVersion 28
+
+//        versionCode getVersionCode()
+//        versionName getVersionName()
+//        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        versionCode 445
+        versionName "v1.9.1mod"
     }
     buildTypes {
+
         release {
-            minifyEnabled true
-            shrinkResources true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+            //minifyEnabled true
+            //shrinkResources true
+            //debuggable true
+            //proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            signingConfig signingConfigs.debug
+            debuggable true
         }
     }
     applicationVariants.all { variant ->
         if (variant.name == "debug") {
             variant.outputs.each { o -> o.versionCodeOverride = System.currentTimeSeconds() }
+        }
+        variant.outputs.all {
+            outputFileName = "Shelter.apk"
         }
     }
     compileOptions {
@@ -82,10 +108,13 @@ dependencies {
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'com.google.android.material:material:1.10.0'
     implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
-    implementation 'mobi.upod:time-duration-picker:1.1.3'
+    //implementation 'mobi.upod:time-duration-picker:1.1.3'
+    implementation 'com.github.zaplitny:time-duration-picker:1.1.3.2'
+    implementation 'androidx.core:core-ktx:1.13.1'
     debugImplementation project(path: ':setup-wizard-lib', configuration: 'gingerbreadCompatDebugRuntimeElements')
     releaseImplementation project(path: ':setup-wizard-lib', configuration: 'gingerbreadCompatReleaseRuntimeElements')
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test:runner:1.6.0-alpha04'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.0-alpha01'
+    implementation "androidx.profileinstaller:profileinstaller:1.3.1"
 }
