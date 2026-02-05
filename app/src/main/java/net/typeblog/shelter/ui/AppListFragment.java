@@ -42,13 +42,18 @@ import net.typeblog.shelter.util.LocalStorageManager;
 import net.typeblog.shelter.util.Utility;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 public class AppListFragment extends BaseFragment {
     static final String BROADCAST_REFRESH = "net.typeblog.shelter.broadcast.REFRESH";
+
+    // Static cache of app lists keyed by profile type (true = work, false = main)
+    private static final Map<Boolean, List<ApplicationInfoWrapper>> sAppCache = new HashMap<>();
 
     // Menu Items
     private static final int MENU_ITEM_CLONE = 10001;
@@ -141,7 +146,7 @@ public class AppListFragment extends BaseFragment {
         LocalBroadcastManager.getInstance(getContext())
                 .registerReceiver(mSearchReceiver,
                         new IntentFilter(MainActivity.BROADCAST_SEARCH_FILTER_CHANGED));
-        refresh();
+        loadFromCacheOrRefresh();
     }
 
     @Override
@@ -184,10 +189,25 @@ public class AppListFragment extends BaseFragment {
         mList.setLayoutManager(new LinearLayoutManager(getActivity()));
         mList.setHasFixedSize(true);
 
-        mSwipeRefresh.setOnRefreshListener(this::refresh);
+        // Disable swipe-to-refresh; refresh only via toolbar button
+        mSwipeRefresh.setEnabled(false);
         registerForContextMenu(mList);
 
         return view;
+    }
+
+    private void loadFromCacheOrRefresh() {
+        if (mAdapter == null) return;
+        List<ApplicationInfoWrapper> cached = sAppCache.get(mIsRemote);
+        if (cached != null) {
+            mAdapter.setData(cached);
+        } else {
+            refresh();
+        }
+    }
+
+    static void clearCache() {
+        sAppCache.clear();
     }
 
     void refresh() {
@@ -224,6 +244,8 @@ public class AppListFragment extends BaseFragment {
                                 LocalStorageManager.PREF_AUTO_FREEZE_LIST_WORK_PROFILE,
                                 apps);
                     }
+                    // Store in static cache
+                    sAppCache.put(mIsRemote, new ArrayList<>(apps));
                     runOnUiThread(() -> {
                         mSwipeRefresh.setRefreshing(false);
                         mAdapter.setData(apps);

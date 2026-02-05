@@ -388,7 +388,13 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         int itemId = item.getItemId();
-        if (itemId == R.id.main_menu_freeze_all) {
+        if (itemId == R.id.main_menu_refresh) {
+            // Clear the static app list cache and refresh both fragments
+            AppListFragment.clearCache();
+            LocalBroadcastManager.getInstance(this)
+                    .sendBroadcast(new Intent(AppListFragment.BROADCAST_REFRESH));
+            return true;
+        } else if (itemId == R.id.main_menu_freeze_all) {
             // This is the same as clicking on the batch freeze shortcut
             // so we just forward the request to DummyActivity
             Intent intent = new Intent(DummyActivity.PUBLIC_FREEZE_ALL);
@@ -417,6 +423,7 @@ public class MainActivity extends AppCompatActivity {
             Runnable update = () -> {
                 mShowAll = !item.isChecked();
                 item.setChecked(mShowAll);
+                AppListFragment.clearCache();
                 LocalBroadcastManager.getInstance(this)
                         .sendBroadcast(new Intent(AppListFragment.BROADCAST_REFRESH));
             };
