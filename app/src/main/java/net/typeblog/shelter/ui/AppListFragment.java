@@ -210,6 +210,12 @@ public class AppListFragment extends BaseFragment {
         sAppCache.clear();
     }
 
+    private void updateAppHiddenState(ApplicationInfoWrapper app, boolean hidden) {
+        // Update in-place; the same object is referenced by the adapter list and the static cache
+        app.setHidden(hidden);
+        mAdapter.notifyDataSetChanged();
+    }
+
     void refresh() {
         if (mAdapter == null) return;
         if (mRefreshing) return;
@@ -396,7 +402,7 @@ public class AppListFragment extends BaseFragment {
                 }
                 Toast.makeText(getContext(),
                         getString(R.string.freeze_success, mSelectedApp.getLabel()), Toast.LENGTH_SHORT).show();
-                refresh();
+                updateAppHiddenState(mSelectedApp, true);
                 return true;
             case MENU_ITEM_UNFREEZE:
                 try {
@@ -406,7 +412,7 @@ public class AppListFragment extends BaseFragment {
                 }
                 Toast.makeText(getContext(),
                         getString(R.string.unfreeze_success, mSelectedApp.getLabel()), Toast.LENGTH_SHORT).show();
-                refresh();
+                updateAppHiddenState(mSelectedApp, false);
                 return true;
             case MENU_ITEM_LAUNCH:
                 // LAUNCH and UNFREEZE_AND_LAUNCH share the same ID
