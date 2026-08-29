@@ -33,19 +33,32 @@ def getVersionName = { ->
     }
 }
 
+// Signing credentials live outside the repository. Copy signing.properties.example to
+// signing.properties and point it at your own keystore. Without that file the build still
+// works -- Gradle just falls back to the default debug keystore, so release builds are
+// unsigned-for-distribution rather than broken.
+def signingProps = new Properties()
+def signingPropsFile = rootProject.file('signing.properties')
+if (signingPropsFile.exists()) {
+    signingPropsFile.withInputStream { signingProps.load(it) }
+}
+def hasSigningConfig = signingProps.containsKey('storeFile')
+
 android {
     signingConfigs {
-        debug {
-            storeFile file('d:\\Programming\\keystores\\keystore2.jks')
-            storePassword 'qwerty'
-            keyAlias 'key0'
-            keyPassword 'qwerty'
-        }
-        release {
-            storeFile file('d:\\Programming\\keystores\\keystore2.jks')
-            storePassword 'qwerty'
-            keyAlias 'key0'
-            keyPassword 'qwerty'
+        if (hasSigningConfig) {
+            debug {
+                storeFile file(signingProps['storeFile'])
+                storePassword signingProps['storePassword']
+                keyAlias signingProps['keyAlias']
+                keyPassword signingProps['keyPassword']
+            }
+            release {
+                storeFile file(signingProps['storeFile'])
+                storePassword signingProps['storePassword']
+                keyAlias signingProps['keyAlias']
+                keyPassword signingProps['keyPassword']
+            }
         }
     }
 
@@ -66,14 +79,14 @@ android {
     buildTypes {
 
         release {
-            signingConfig signingConfigs.release
+            if (hasSigningConfig) signingConfig signingConfigs.release
             //minifyEnabled true
             //shrinkResources true
             //debuggable true
             //proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
-            signingConfig signingConfigs.debug
+            if (hasSigningConfig) signingConfig signingConfigs.debug
             debuggable true
         }
     }

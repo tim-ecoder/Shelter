@@ -83,3 +83,6 @@ repackage/*
 
 # local scratch notes
 tasks.todo
+
+# signing credentials -- never commit
+signing.properties

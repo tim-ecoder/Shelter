@@ -1,0 +1,6 @@
+# Copy to signing.properties and fill in your own keystore.
+# signing.properties is gitignored -- never commit real credentials.
+storeFile=/path/to/your/keystore.jks
+storePassword=
+keyAlias=
+keyPassword=
