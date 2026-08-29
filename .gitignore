@@ -80,3 +80,6 @@ fastlane/readme.md
 # temporary google play repackaging tool
 repackage/*
 !repackage/repackage.sh
+
+# local scratch notes
+tasks.todo
