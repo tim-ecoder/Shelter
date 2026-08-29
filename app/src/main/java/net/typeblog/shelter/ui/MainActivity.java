@@ -373,6 +373,18 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onStop() {
+        super.onStop();
+        // The cache is only trustworthy while we are on screen. Nothing tells the UI when
+        // state changes behind its back -- batch freeze and the auto-freeze service run in
+        // the profile and never reach us, and apps installed or removed from inside the
+        // profile are equally invisible. Serving a stale list would misreport whether an app
+        // is frozen, which is the one thing this list has to get right, so the cache is
+        // dropped whenever we leave the foreground and rebuilt on the way back in.
+        AppListFragment.clearCache();
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
 
