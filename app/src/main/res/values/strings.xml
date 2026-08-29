@@ -117,4 +117,15 @@
 
     <!-- Formats -->
     <string name="format_minutes">%d min</string>
+
+    <!-- Work profile re-adoption -->
+    <string name="readopt_title">Existing work profile found</string>
+    <string name="readopt_message">A work profile managed by Shelter already exists, but this copy of Shelter no longer has the key it needs to talk to it. This happens when Shelter is reinstalled in the main profile only.\n\nShelter can ask the copy inside the work profile to hand the key back. You will need to confirm the request there.</string>
+    <string name="readopt_continue">Reconnect</string>
+    <string name="readopt_failed">Could not reach Shelter inside the work profile.</string>
+    <string name="recover_auth_key_title">Reconnect to main profile?</string>
+    <string name="recover_auth_key_message">Shelter in the main profile is asking to reconnect to this work profile.\n\nConfirm only if you just reinstalled Shelter yourself. Approving this grants the main profile full control over the apps in this work profile.</string>
+    <string name="recover_auth_key_confirm">Reconnect</string>
+    <string name="recover_auth_key_failed">Could not reach Shelter in the main profile.</string>
+    <string name="recover_auth_key_succeeded">Reconnected to the work profile.</string>
 </resources>

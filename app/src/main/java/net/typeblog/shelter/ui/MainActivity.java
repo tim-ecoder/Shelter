@@ -38,6 +38,7 @@ import net.typeblog.shelter.services.KillerService;
 import net.typeblog.shelter.util.LocalStorageManager;
 import net.typeblog.shelter.util.SettingsManager;
 import net.typeblog.shelter.util.UriForwardProxy;
+import net.typeblog.shelter.util.AuthenticationUtility;
 import net.typeblog.shelter.util.Utility;
 
 public class MainActivity extends AppCompatActivity {
@@ -98,12 +99,51 @@ public class MainActivity extends AppCompatActivity {
             // needs to be brought up inside the work profile
             mResumeSetup.launch(null);
         } else if (!mStorage.getBoolean(LocalStorageManager.PREF_HAS_SETUP)) {
-            mStartSetup.launch(null);
+            if (Utility.isWorkProfileProvisioned(this)) {
+                // A work profile managed by us is already there. This is what a reinstall in
+                // the main profile alone looks like: the profile and its profile owner survived,
+                // only our own state did not. Provisioning a second one is impossible anyway,
+                // so adopt the existing profile instead of walking the user into a failed setup.
+                promptReAdoptProfile();
+            } else {
+                mStartSetup.launch(null);
+            }
         } else {
             // Initialize the settings
             SettingsManager.getInstance().applyAll();
             // Initialize the app (start by binding the services)
             bindServices();
+        }
+    }
+
+    // Ask the copy of Shelter inside the existing work profile to hand its auth key back,
+    // so that the two sides can talk to each other again.
+    private void promptReAdoptProfile() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.readopt_title)
+                .setMessage(R.string.readopt_message)
+                .setPositiveButton(R.string.readopt_continue, (dialog, which) -> startAuthKeyRecovery())
+                .setNegativeButton(android.R.string.cancel, (dialog, which) -> finish())
+                .setOnCancelListener((dialog) -> finish())
+                .show();
+    }
+
+    private void startAuthKeyRecovery() {
+        // We must go into this without a key of our own. AuthenticationUtility only ever trusts
+        // the first key it sees, so a key generated here would make us reject the profile's one.
+        AuthenticationUtility.reset();
+
+        Intent intent = new Intent(DummyActivity.TRY_START_SERVICE);
+        intent.putExtra(DummyActivity.EXTRA_RECOVER_AUTH_KEY, true);
+        try {
+            Utility.transferIntentToProfileUnsigned(this, intent);
+            startActivity(intent);
+            // The profile side replies with RECOVER_AUTH_KEY_RESPONSE, which lands in our
+            // DummyActivity and brings MainActivity back up once the key is in place.
+            finish();
+        } catch (IllegalStateException e) {
+            Toast.makeText(this, getString(R.string.readopt_failed), Toast.LENGTH_LONG).show();
+            finish();
         }
     }
 

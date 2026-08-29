@@ -97,6 +97,18 @@ public class Utility {
         }
     }
 
+    // Determine whether a work profile managed by us already exists.
+    // Unlike isWorkProfileAvailable(), this only probes and never touches our own state,
+    // which is what we need before deciding between setting a profile up and adopting one.
+    public static boolean isWorkProfileProvisioned(Context context) {
+        try {
+            transferIntentToProfileUnsigned(context, new Intent(DummyActivity.TRY_START_SERVICE));
+            return true;
+        } catch (IllegalStateException e) {
+            return false;
+        }
+    }
+
     // Determine if the work profile is already available
     // If so, return true and set all the corresponding flags to true
     // This is for scenarios where the asynchronous part of the
@@ -176,6 +188,13 @@ public class Utility {
                 adminComponent,
                 new IntentFilter(DummyActivity.SYNCHRONIZE_PREFERENCE),
                 DevicePolicyManager.FLAG_MANAGED_CAN_ACCESS_PARENT);
+
+        // Carries the shared auth key back to a main profile that lost it,
+        // see DummyActivity.actionRecoverAuthKey()
+        manager.addCrossProfileIntentFilter(
+                adminComponent,
+                new IntentFilter(DummyActivity.RECOVER_AUTH_KEY_RESPONSE),
+                DevicePolicyManager.FLAG_PARENT_CAN_ACCESS_MANAGED);
 
         // Needed by ShelterService and has to be proxied by the MainActivity in main profile
         manager.addCrossProfileIntentFilter(

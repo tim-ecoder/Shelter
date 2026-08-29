@@ -74,6 +74,17 @@ public class DummyActivity extends Activity {
     public static final String START_FILE_SHUTTLE_2 = "net.typeblog.shelter.action.START_FILE_SHUTTLE_2";
     public static final String SYNCHRONIZE_PREFERENCE = "net.typeblog.shelter.action.SYNCHRONIZE_PREFERENCE";
     public static final String PACKAGEINSTALLER_CALLBACK = "net.typeblog.shelter.action.PACKAGEINSTALLER_CALLBACK";
+    // Sent from the profile back to the main profile to hand over the shared auth key,
+    // re-establishing the link after Shelter was reinstalled in the main profile only.
+    public static final String RECOVER_AUTH_KEY_RESPONSE = "net.typeblog.shelter.action.RECOVER_AUTH_KEY_RESPONSE";
+
+    // Marks a TRY_START_SERVICE intent as a request to hand the auth key back over.
+    // TRY_START_SERVICE is the carrier because it is an action that already crosses from the
+    // main profile into the managed one (FLAG_MANAGED_CAN_ACCESS_PARENT, which despite its
+    // name is the parent-to-managed direction). That matters twice over: it is the only way
+    // to reach the profile at all when our key is gone, and merely delivering it runs our
+    // onCreate() there, which re-applies the policies that put the reply filter in place.
+    public static final String EXTRA_RECOVER_AUTH_KEY = "recover_auth_key";
 
     // Only these actions are allowed without a valid signature
     private static final List<String> ACTIONS_ALLOWED_WITHOUT_SIGNATURE = Arrays.asList(
@@ -162,6 +173,16 @@ public class DummyActivity extends Activity {
     private void init() {
         Intent intent = getIntent();
 
+        // Auth key recovery is deliberately handled before the signature check: the whole
+        // reason the main profile is asking is that it has no key left to sign with.
+        // This is safe only because actionRecoverAuthKey() refuses to do anything without
+        // the user explicitly confirming it on screen, inside this profile.
+        if (mIsProfileOwner && TRY_START_SERVICE.equals(intent.getAction())
+                && intent.getBooleanExtra(EXTRA_RECOVER_AUTH_KEY, false)) {
+            actionRecoverAuthKey();
+            return;
+        }
+
         // First check if we have a registered request from the same process
         // if it passes, we don't have to check if it has proper signature any more
         if (!checkSameProcessRequest(getIntent())) {
@@ -202,6 +223,8 @@ public class DummyActivity extends Activity {
             actionStartFileShuttle();
         } else if (SYNCHRONIZE_PREFERENCE.equals(intent.getAction())) {
             actionSynchronizePreference();
+        } else if (RECOVER_AUTH_KEY_RESPONSE.equals(intent.getAction())) {
+            actionRecoverAuthKeyResponse();
         } else {
             finish();
         }
@@ -283,6 +306,71 @@ public class DummyActivity extends Activity {
             Toast.makeText(this, getString(R.string.provision_finished), Toast.LENGTH_LONG).show();
             finish();
         }
+    }
+
+    // === Auth key recovery (profile side) ===
+    // Handing the key out is what lets a reinstalled main profile talk to us again, but it also
+    // hands out full control over this profile's Shelter functions. FINALIZE_PROVISION is callable
+    // without a signature by anything that can reach across the boundary, so the only thing
+    // standing between a caller and the key is the user. Always ask, never decide for them.
+    private void actionRecoverAuthKey() {
+        String key = LocalStorageManager.getInstance().getString(LocalStorageManager.PREF_AUTH_KEY);
+        if (key == null) {
+            // We have no key either, so there is nothing to recover: the ordinary
+            // first-key exchange will establish one for both sides.
+            finish();
+            return;
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.recover_auth_key_title)
+                .setMessage(R.string.recover_auth_key_message)
+                .setPositiveButton(R.string.recover_auth_key_confirm,
+                        (dialog, which) -> sendAuthKeyToMainProfile(key))
+                .setNegativeButton(android.R.string.cancel, (dialog, which) -> finish())
+                .setOnCancelListener((dialog) -> finish())
+                .show();
+    }
+
+    private void sendAuthKeyToMainProfile(String key) {
+        Intent intent = new Intent(RECOVER_AUTH_KEY_RESPONSE);
+        intent.putExtra("auth_key", key);
+        try {
+            // Unsigned on purpose: the receiving side has no key yet, which is the whole point.
+            // It will accept this one through the same trust-on-first-use path used during setup.
+            Utility.transferIntentToProfileUnsigned(this, intent);
+            startActivity(intent);
+        } catch (IllegalStateException e) {
+            Toast.makeText(this, getString(R.string.recover_auth_key_failed), Toast.LENGTH_LONG).show();
+        }
+        finish();
+    }
+
+    // === Auth key recovery (main profile side) ===
+    private void actionRecoverAuthKeyResponse() {
+        if (mIsProfileOwner) {
+            // Only ever meaningful in the main profile
+            finish();
+            return;
+        }
+
+        // Getting here at all means checkIntent() accepted the intent, which for a
+        // keyless main profile means it just stored the key the profile sent us.
+        if (LocalStorageManager.getInstance().getString(LocalStorageManager.PREF_AUTH_KEY) == null) {
+            finish();
+            return;
+        }
+
+        LocalStorageManager.getInstance()
+                .setBoolean(LocalStorageManager.PREF_HAS_SETUP, true);
+        LocalStorageManager.getInstance()
+                .setBoolean(LocalStorageManager.PREF_IS_SETTING_UP, false);
+
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(intent);
+        Toast.makeText(this, getString(R.string.recover_auth_key_succeeded), Toast.LENGTH_LONG).show();
+        finish();
     }
 
     private void actionStartService() {
