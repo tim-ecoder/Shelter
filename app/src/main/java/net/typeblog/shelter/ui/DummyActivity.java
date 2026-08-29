@@ -2,6 +2,7 @@ package net.typeblog.shelter.ui;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.ActivityOptions;
 import android.app.PendingIntent;
 import android.app.ProgressDialog;
 import android.app.admin.DevicePolicyManager;
@@ -14,6 +15,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.Process;
 import android.os.RemoteException;
 import android.os.StrictMode;
 import android.view.LayoutInflater;
@@ -83,8 +85,44 @@ public class DummyActivity extends Activity {
     // main profile into the managed one (FLAG_MANAGED_CAN_ACCESS_PARENT, which despite its
     // name is the parent-to-managed direction). That matters twice over: it is the only way
     // to reach the profile at all when our key is gone, and merely delivering it runs our
-    // onCreate() there, which re-applies the policies that put the reply filter in place.
+    // onCreate() there, which re-applies our policies.
     public static final String EXTRA_RECOVER_AUTH_KEY = "recover_auth_key";
+
+    // A PendingIntent created by the requesting side and carried along with the request.
+    // Everything about the request is attacker-controlled except this: the system stamps the
+    // creator's package and uid onto a PendingIntent and no app can forge either. It answers
+    // the question the intent itself cannot -- who is really asking -- which is otherwise lost
+    // because IntentForwarderActivity delivers on behalf of the system.
+    // It is also how the key travels back: PendingIntent.send() goes to the component the
+    // creator named, so nothing else can position itself to receive it.
+    public static final String EXTRA_RECOVER_SHUTTLE = "recover_shuttle";
+
+    // Guards the reply component itself. DummyActivity is exported, so anything could invoke
+    // RECOVER_AUTH_KEY_RESPONSE directly with a key of its own choosing and we would adopt it
+    // through the trust-on-first-use path. Only a reply carrying the nonce we just generated
+    // is one we asked for -- and that nonce is only ever inside our own PendingIntent,
+    // never on the wire.
+    public static final String EXTRA_RECOVER_NONCE = "recover_nonce";
+
+    // Deliberately kept in memory only: a nonce surviving on disk would outlive the exchange
+    // it authorises. Losing it to a process death just means the user retries.
+    private static volatile String sRecoveryNonce = null;
+
+    public static synchronized String newRecoveryNonce() {
+        sRecoveryNonce = UUID.randomUUID().toString();
+        return sRecoveryNonce;
+    }
+
+    private static synchronized boolean consumeRecoveryNonce(String nonce) {
+        boolean ok = sRecoveryNonce != null && sRecoveryNonce.equals(nonce);
+        sRecoveryNonce = null;  // single use, valid or not
+        return ok;
+    }
+
+    // Same app in another profile shares our app id; only the user portion of the uid differs.
+    private static int appIdOf(int uid) {
+        return uid % 100000;  // UserHandle.PER_USER_RANGE
+    }
 
     // Only these actions are allowed without a valid signature
     private static final List<String> ACTIONS_ALLOWED_WITHOUT_SIGNATURE = Arrays.asList(
@@ -314,6 +352,21 @@ public class DummyActivity extends Activity {
     // without a signature by anything that can reach across the boundary, so the only thing
     // standing between a caller and the key is the user. Always ask, never decide for them.
     private void actionRecoverAuthKey() {
+        PendingIntent shuttle = getIntent().getParcelableExtra(EXTRA_RECOVER_SHUTTLE);
+        if (shuttle == null) {
+            finish();
+            return;
+        }
+
+        // The only trustworthy thing in this request. Both halves matter: the package name
+        // pins it to Shelter, the app id pins it to *this* installation of Shelter rather
+        // than a different one sharing the name.
+        if (!getPackageName().equals(shuttle.getCreatorPackage())
+                || appIdOf(shuttle.getCreatorUid()) != appIdOf(Process.myUid())) {
+            finish();
+            return;
+        }
+
         String key = LocalStorageManager.getInstance().getString(LocalStorageManager.PREF_AUTH_KEY);
         if (key == null) {
             // We have no key either, so there is nothing to recover: the ordinary
@@ -326,21 +379,37 @@ public class DummyActivity extends Activity {
                 .setTitle(R.string.recover_auth_key_title)
                 .setMessage(R.string.recover_auth_key_message)
                 .setPositiveButton(R.string.recover_auth_key_confirm,
-                        (dialog, which) -> sendAuthKeyToMainProfile(key))
+                        (dialog, which) -> sendAuthKeyToMainProfile(shuttle, key))
                 .setNegativeButton(android.R.string.cancel, (dialog, which) -> finish())
                 .setOnCancelListener((dialog) -> finish())
                 .show();
     }
 
-    private void sendAuthKeyToMainProfile(String key) {
-        Intent intent = new Intent(RECOVER_AUTH_KEY_RESPONSE);
-        intent.putExtra("auth_key", key);
+    private void sendAuthKeyToMainProfile(PendingIntent shuttle, String key) {
+        // Not forwarded by action: this lands on the component the requester named when it
+        // built the PendingIntent, so the key cannot be intercepted by another app claiming
+        // the same action. The nonce rides back untouched from the request.
+        // Only the key. The nonce never leaves the main profile: it is baked into the
+        // shuttle's own intent, which we cannot read and therefore cannot leak, and which
+        // takes precedence over these extras when the shuttle fires.
+        Intent data = new Intent().putExtra("auth_key", key);
         try {
-            // Unsigned on purpose: the receiving side has no key yet, which is the whole point.
-            // It will accept this one through the same trust-on-first-use path used during setup.
-            Utility.transferIntentToProfileUnsigned(this, intent);
-            startActivity(intent);
-        } catch (IllegalStateException e) {
+            // The creator is backgrounded by the time we answer, so on its own the send would
+            // be refused as a background activity launch. We are the visible, foreground side
+            // of this exchange, so opt in explicitly on the sender's behalf.
+            Bundle options = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                options = ActivityOptions.makeBasic()
+                        .setPendingIntentBackgroundActivityStartMode(
+                                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                        .toBundle();
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ActivityOptions opts = ActivityOptions.makeBasic();
+                opts.setPendingIntentBackgroundActivityLaunchAllowed(true);
+                options = opts.toBundle();
+            }
+            shuttle.send(this, 0, data, null, null, null, options);
+        } catch (PendingIntent.CanceledException e) {
             Toast.makeText(this, getString(R.string.recover_auth_key_failed), Toast.LENGTH_LONG).show();
         }
         finish();
@@ -354,8 +423,14 @@ public class DummyActivity extends Activity {
             return;
         }
 
-        // Getting here at all means checkIntent() accepted the intent, which for a
-        // keyless main profile means it just stored the key the profile sent us.
+        if (!consumeRecoveryNonce(getIntent().getStringExtra(EXTRA_RECOVER_NONCE))) {
+            // Not a reply to a request of ours. Whatever key came with it must not be kept:
+            // checkIntent() may already have taken it through trust-on-first-use.
+            AuthenticationUtility.reset();
+            finish();
+            return;
+        }
+
         if (LocalStorageManager.getInstance().getString(LocalStorageManager.PREF_AUTH_KEY) == null) {
             finish();
             return;

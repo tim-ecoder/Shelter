@@ -189,13 +189,6 @@ public class Utility {
                 new IntentFilter(DummyActivity.SYNCHRONIZE_PREFERENCE),
                 DevicePolicyManager.FLAG_MANAGED_CAN_ACCESS_PARENT);
 
-        // Carries the shared auth key back to a main profile that lost it,
-        // see DummyActivity.actionRecoverAuthKey()
-        manager.addCrossProfileIntentFilter(
-                adminComponent,
-                new IntentFilter(DummyActivity.RECOVER_AUTH_KEY_RESPONSE),
-                DevicePolicyManager.FLAG_PARENT_CAN_ACCESS_MANAGED);
-
         // Needed by ShelterService and has to be proxied by the MainActivity in main profile
         manager.addCrossProfileIntentFilter(
                 adminComponent,

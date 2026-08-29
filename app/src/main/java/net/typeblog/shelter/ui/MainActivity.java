@@ -2,6 +2,7 @@ package net.typeblog.shelter.ui;
 
 import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.graphics.drawable.Icon;
@@ -133,14 +134,24 @@ public class MainActivity extends AppCompatActivity {
         // the first key it sees, so a key generated here would make us reject the profile's one.
         AuthenticationUtility.reset();
 
+        // The reply target is pinned here, in the component we name ourselves, rather than
+        // left to intent resolution on the way back.
+        Intent reply = new Intent(this, DummyActivity.class)
+                .setAction(DummyActivity.RECOVER_AUTH_KEY_RESPONSE)
+                .putExtra(DummyActivity.EXTRA_RECOVER_NONCE, DummyActivity.newRecoveryNonce());
+        // Mutable so the profile can attach the key to it.
+        PendingIntent shuttle = PendingIntent.getActivity(this, 0, reply,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+
         Intent intent = new Intent(DummyActivity.TRY_START_SERVICE);
         intent.putExtra(DummyActivity.EXTRA_RECOVER_AUTH_KEY, true);
+        intent.putExtra(DummyActivity.EXTRA_RECOVER_SHUTTLE, shuttle);
         try {
             Utility.transferIntentToProfileUnsigned(this, intent);
             startActivity(intent);
-            // The profile side replies with RECOVER_AUTH_KEY_RESPONSE, which lands in our
-            // DummyActivity and brings MainActivity back up once the key is in place.
-            finish();
+            // Deliberately not finishing: staying alive keeps this process out of the cached
+            // state, which is what lets the shuttle fire back at us. DummyActivity restarts
+            // MainActivity with CLEAR_TASK once the key is in place.
         } catch (IllegalStateException e) {
             Toast.makeText(this, getString(R.string.readopt_failed), Toast.LENGTH_LONG).show();
             finish();
