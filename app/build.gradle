@@ -61,7 +61,7 @@ android {
 //        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         versionCode 445
-        versionName "-v1.9.1-krab-v1.0a"
+        versionName "v1.9.1-krab-v1.1a"
     }
     buildTypes {
 
@@ -79,8 +79,7 @@ android {
     }
     applicationVariants.all { variant ->
         variant.outputs.all {
-            // versionName carries its own leading separator
-            outputFileName = "Shelter${variant.versionName}.apk"
+            outputFileName = "Shelter-${variant.versionName}.apk"
         }
     }
     compileOptions {
