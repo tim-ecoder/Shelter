@@ -172,6 +172,14 @@ public class SetupWizardActivity extends AppCompatActivity {
             Intent intent = new Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE);
             intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_SKIP_ENCRYPTION, true);
             intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin);
+            // Android 14+ routes provisioning through the Device Policy Management role holder.
+            // On ROMs that declare the role but ship no holder, managedprovisioning refuses with
+            // "Role holder is configured, can't provision via role holder and
+            // PROVISIONING_ALLOW_OFFLINE is false". This extra makes it provision via the platform.
+            // Literal string rather than EXTRA_PROVISIONING_ALLOW_OFFLINE: the constant is API 33
+            // and already deprecated, while the system reads the extra by name regardless of our
+            // targetSdk.
+            intent.putExtra("android.app.extra.PROVISIONING_ALLOW_OFFLINE", true);
             return intent;
         }
 
