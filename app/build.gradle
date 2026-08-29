@@ -61,7 +61,7 @@ android {
 //        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         versionCode 445
-        versionName "v1.9.1mod"
+        versionName "-v1.9.1-krab-v1.0a"
     }
     buildTypes {
 
@@ -78,11 +78,9 @@ android {
         }
     }
     applicationVariants.all { variant ->
-        if (variant.name == "debug") {
-            variant.outputs.each { o -> o.versionCodeOverride = System.currentTimeSeconds() }
-        }
         variant.outputs.all {
-            outputFileName = "Shelter.apk"
+            // versionName carries its own leading separator
+            outputFileName = "Shelter${variant.versionName}.apk"
         }
     }
     compileOptions {
