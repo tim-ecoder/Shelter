@@ -25,7 +25,7 @@ Additions & behaviour changes
 ---
 
 - Work profile tab is first and selected on startup; swiping between tabs is disabled (stray swipes are easy to trigger one-handed on a device with a keyboard).
-- App list is cached, with an explicit **Refresh** button in the toolbar, so switching tabs does not re-read PackageManager every time. The cache is dropped whenever Shelter leaves the foreground, so it can never misreport whether an app is frozen.
+- App list is cached on disk, with an explicit **Refresh** button in the toolbar, so returning to Shelter or switching tabs does not re-read PackageManager every time, even after Android stops the app. Refresh it when apps or their frozen state have changed outside Shelter.
 - **Batch Unfreeze** toolbar button, unfreezing everything that is frozen -- not just the auto-freeze list, so apps frozen by hand are included.
 
 Build

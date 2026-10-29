@@ -9,9 +9,13 @@ import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
+import android.util.Base64;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Parcel;
 import android.os.RemoteException;
 import android.view.ContextMenu;
 import android.view.LayoutInflater;
@@ -51,6 +55,9 @@ import java.util.stream.Collectors;
 
 public class AppListFragment extends BaseFragment {
     static final String BROADCAST_REFRESH = "net.typeblog.shelter.broadcast.REFRESH";
+    private static final long REFRESH_TIMEOUT_MS = 15_000;
+    private static final String PREF_APP_CACHE_MAIN_PROFILE = "app_cache_main_profile";
+    private static final String PREF_APP_CACHE_WORK_PROFILE = "app_cache_work_profile";
 
     // Static cache of app lists keyed by profile type (true = work, false = main)
     private static final Map<Boolean, List<ApplicationInfoWrapper>> sAppCache = new HashMap<>();
@@ -69,6 +76,9 @@ public class AppListFragment extends BaseFragment {
     private IShelterService mService = null;
     private boolean mIsRemote = false;
     private boolean mRefreshing = false;
+    private long mRefreshId = 0;
+    private final Handler mHandler = new Handler(Looper.getMainLooper());
+    private Runnable mRefreshTimeout = null;
     // A refresh asked for while one is already running would otherwise be dropped silently,
     // and the running one may have read PackageManager before the change we were told about.
     private boolean mRefreshPending = false;
@@ -202,6 +212,10 @@ public class AppListFragment extends BaseFragment {
     private void loadFromCacheOrRefresh() {
         if (mAdapter == null) return;
         List<ApplicationInfoWrapper> cached = sAppCache.get(mIsRemote);
+        if (cached == null) {
+            cached = loadPersistentCache(mIsRemote);
+            if (cached != null) sAppCache.put(mIsRemote, cached);
+        }
         if (cached != null) {
             mAdapter.setData(cached);
         } else {
@@ -211,6 +225,44 @@ public class AppListFragment extends BaseFragment {
 
     static void clearCache() {
         sAppCache.clear();
+        LocalStorageManager storage = LocalStorageManager.getInstance();
+        storage.remove(PREF_APP_CACHE_MAIN_PROFILE);
+        storage.remove(PREF_APP_CACHE_WORK_PROFILE);
+    }
+
+    private static String cachePreference(boolean isRemote) {
+        return isRemote ? PREF_APP_CACHE_WORK_PROFILE : PREF_APP_CACHE_MAIN_PROFILE;
+    }
+
+    private static List<ApplicationInfoWrapper> loadPersistentCache(boolean isRemote) {
+        String encoded = LocalStorageManager.getInstance().getString(cachePreference(isRemote));
+        if (encoded == null) return null;
+
+        Parcel parcel = Parcel.obtain();
+        try {
+            byte[] data = Base64.decode(encoded, Base64.NO_WRAP);
+            parcel.unmarshall(data, 0, data.length);
+            parcel.setDataPosition(0);
+            List<ApplicationInfoWrapper> apps = parcel.createTypedArrayList(ApplicationInfoWrapper.CREATOR);
+            return apps == null ? new ArrayList<>() : apps;
+        } catch (RuntimeException e) {
+            // A cache from an incompatible app or Android version is disposable.
+            LocalStorageManager.getInstance().remove(cachePreference(isRemote));
+            return null;
+        } finally {
+            parcel.recycle();
+        }
+    }
+
+    private static void savePersistentCache(boolean isRemote, List<ApplicationInfoWrapper> apps) {
+        Parcel parcel = Parcel.obtain();
+        try {
+            parcel.writeTypedList(apps);
+            LocalStorageManager.getInstance().setString(cachePreference(isRemote),
+                    Base64.encodeToString(parcel.marshall(), Base64.NO_WRAP));
+        } finally {
+            parcel.recycle();
+        }
     }
 
     private void removeAppFromList(ApplicationInfoWrapper app) {
@@ -218,12 +270,15 @@ public class AppListFragment extends BaseFragment {
         List<ApplicationInfoWrapper> cached = sAppCache.get(mIsRemote);
         if (cached == null) return;   // nothing cached to correct; the refresh below covers us
         cached.removeIf((it) -> it.getPackageName().equals(app.getPackageName()));
+        savePersistentCache(mIsRemote, cached);
         mAdapter.setData(cached);
     }
 
     private void updateAppHiddenState(ApplicationInfoWrapper app, boolean hidden) {
         // Update in-place; the same object is referenced by the adapter list and the static cache
         app.setHidden(hidden);
+        List<ApplicationInfoWrapper> cached = sAppCache.get(mIsRemote);
+        if (cached != null) savePersistentCache(mIsRemote, cached);
         mAdapter.notifyDataSetChanged();
     }
 
@@ -239,6 +294,13 @@ public class AppListFragment extends BaseFragment {
         }
         mRefreshing = true;
         mSwipeRefresh.setRefreshing(true);
+        final long refreshId = ++mRefreshId;
+        mRefreshTimeout = () -> {
+            if (mRefreshing && refreshId == mRefreshId) {
+                onRefreshFailed();
+            }
+        };
+        mHandler.postDelayed(mRefreshTimeout, REFRESH_TIMEOUT_MS);
 
         try {
             mService.getApps(new IGetAppsCallback.Stub() {
@@ -265,8 +327,13 @@ public class AppListFragment extends BaseFragment {
                                 apps);
                     }
                     // Store in static cache
-                    sAppCache.put(mIsRemote, new ArrayList<>(apps));
                     runOnUiThread(() -> {
+                        // A timed-out request may still complete after the services have been
+                        // restarted. Do not let that old result overwrite a newer list.
+                        if (refreshId != mRefreshId) return;
+                        mHandler.removeCallbacks(mRefreshTimeout);
+                        sAppCache.put(mIsRemote, new ArrayList<>(apps));
+                        savePersistentCache(mIsRemote, apps);
                         mSwipeRefresh.setRefreshing(false);
                         mAdapter.setData(apps);
                         mRefreshing = false;
@@ -278,7 +345,24 @@ public class AppListFragment extends BaseFragment {
                 }
             }, ((MainActivity) getActivity()).mShowAll);
         } catch (RemoteException e) {
-            // Just... do nothing for now
+            // A dead cross-profile binder used to leave mRefreshing true forever. Rebuild
+            // both bindings so the work-profile service is started again.
+            runOnUiThread(this::onRefreshFailed);
+        }
+    }
+
+    private void onRefreshFailed() {
+        if (!mRefreshing) return;
+        mRefreshId++;
+        if (mRefreshTimeout != null) mHandler.removeCallbacks(mRefreshTimeout);
+        mRefreshTimeout = null;
+        mRefreshing = false;
+        mRefreshPending = false;
+        if (mSwipeRefresh != null) mSwipeRefresh.setRefreshing(false);
+
+        Activity activity = getActivity();
+        if (activity instanceof MainActivity) {
+            ((MainActivity) activity).restartAfterServiceFailure();
         }
     }
 

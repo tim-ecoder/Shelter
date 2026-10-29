@@ -352,50 +352,37 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        // onPause dropped the cache, and a translucent activity on top of us means the
-        // fragments were never stopped and will not reload by themselves.
-        LocalBroadcastManager.getInstance(this)
-                .sendBroadcast(new Intent(AppListFragment.BROADCAST_REFRESH));
-
         // The services outlive us: they keep running in their own processes while this activity
         // is destroyed and recreated. The proxy they hold to start activities on our behalf then
         // points at the dead instance, and every operation needing a system dialog -- uninstall,
         // clone -- dies with DeadObjectException inside the service, where the exception cannot
         // even cross back to us. Re-register on the way in; it is idempotent and cheap.
         if (mServiceMain != null && mServiceWork != null) {
-            registerStartActivityProxies();
+            try {
+                registerStartActivityProxies();
+            } catch (RuntimeException e) {
+                restartAfterServiceFailure();
+                return;
+            }
+            if (!servicesAlive()) {
+                restartAfterServiceFailure();
+                return;
+            }
         }
-        if (mServiceMain != null && mServiceWork != null && !servicesAlive()) {
-            // First, ensure that the services are killed before we restart
-            // Otherwise, the system will reuse the services and the new activity
-            // will end up depending on those old services that we are going to kill
-            // in onDestroy()
-            doOnDestroy();
 
-            // Tell the onDestroy() logic that we are restarting. Do not kill the
-            // KillerService again because the new activity will be starting a new one
-            mRestarting = true;
-
-            // Restart the activity if the services are no longer alive
-            // This might be caused by KillerService being destroyed and
-            // bringing all the other services with it
-            Intent intent = getIntent();
-            finish();
-            startActivity(intent);
-        }
     }
 
-    @Override
-    protected void onPause() {
-        super.onPause();
-        // The cache is only trustworthy while we are in front. Nothing tells the UI when state
-        // changes behind its back -- batch freeze and the auto-freeze service run in the
-        // profile and never reach us, and apps installed or removed from inside the profile are
-        // equally invisible. A stale list misreports whether an app is frozen, which is the one
-        // thing it has to get right.
-        // Note this is onPause, not onStop: DummyActivity is translucent, so the activities
-        // that do the freezing never stop us, and batch freeze would leave the list untouched.
-        AppListFragment.clearCache();
+    // A work-profile process can be stopped while this activity is in the background. Starting
+    // a fresh activity is the existing, reliable way to run DummyActivity and obtain a new
+    // cross-profile service binder; keep that recovery in one place for health checks and
+    // failed app-list requests.
+    void restartAfterServiceFailure() {
+        if (mRestarting || isFinishing() || isDestroyed()) return;
+        doOnDestroy();
+        mRestarting = true;
+        Intent intent = new Intent(getIntent());
+        finish();
+        startActivity(intent);
     }
 
     @Override
