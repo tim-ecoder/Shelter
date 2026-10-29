@@ -9,13 +9,11 @@ import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
-import android.util.Base64;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.IBinder;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.Parcel;
+import android.os.IBinder;
 import android.os.RemoteException;
 import android.view.ContextMenu;
 import android.view.LayoutInflater;
@@ -46,21 +44,13 @@ import net.typeblog.shelter.util.LocalStorageManager;
 import net.typeblog.shelter.util.Utility;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 public class AppListFragment extends BaseFragment {
     static final String BROADCAST_REFRESH = "net.typeblog.shelter.broadcast.REFRESH";
-    private static final long REFRESH_TIMEOUT_MS = 15_000;
-    private static final String PREF_APP_CACHE_MAIN_PROFILE = "app_cache_main_profile";
-    private static final String PREF_APP_CACHE_WORK_PROFILE = "app_cache_work_profile";
-
-    // Static cache of app lists keyed by profile type (true = work, false = main)
-    private static final Map<Boolean, List<ApplicationInfoWrapper>> sAppCache = new HashMap<>();
 
     // Menu Items
     private static final int MENU_ITEM_CLONE = 10001;
@@ -76,12 +66,13 @@ public class AppListFragment extends BaseFragment {
     private IShelterService mService = null;
     private boolean mIsRemote = false;
     private boolean mRefreshing = false;
+    // A request that is accepted but never answered, or a binder that is already dead, used to
+    // leave mRefreshing true for good, so every later refresh returned early and the tab sat on
+    // its loading indicator until Shelter was swiped out of recents.
+    private static final long REFRESH_TIMEOUT_MS = 15_000;
     private long mRefreshId = 0;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private Runnable mRefreshTimeout = null;
-    // A refresh asked for while one is already running would otherwise be dropped silently,
-    // and the running one may have read PackageManager before the change we were told about.
-    private boolean mRefreshPending = false;
     private Drawable mDefaultIcon = null;
     private ApplicationInfoWrapper mSelectedApp = null;
 
@@ -159,7 +150,7 @@ public class AppListFragment extends BaseFragment {
         LocalBroadcastManager.getInstance(getContext())
                 .registerReceiver(mSearchReceiver,
                         new IntentFilter(MainActivity.BROADCAST_SEARCH_FILTER_CHANGED));
-        loadFromCacheOrRefresh();
+        refresh();
     }
 
     @Override
@@ -202,92 +193,15 @@ public class AppListFragment extends BaseFragment {
         mList.setLayoutManager(new LinearLayoutManager(getActivity()));
         mList.setHasFixedSize(true);
 
-        // Disable swipe-to-refresh; refresh only via toolbar button
-        mSwipeRefresh.setEnabled(false);
+        mSwipeRefresh.setOnRefreshListener(this::refresh);
         registerForContextMenu(mList);
 
         return view;
     }
 
-    private void loadFromCacheOrRefresh() {
-        if (mAdapter == null) return;
-        List<ApplicationInfoWrapper> cached = sAppCache.get(mIsRemote);
-        if (cached == null) {
-            cached = loadPersistentCache(mIsRemote);
-            if (cached != null) sAppCache.put(mIsRemote, cached);
-        }
-        if (cached != null) {
-            mAdapter.setData(cached);
-        } else {
-            refresh();
-        }
-    }
-
-    static void clearCache() {
-        sAppCache.clear();
-        LocalStorageManager storage = LocalStorageManager.getInstance();
-        storage.remove(PREF_APP_CACHE_MAIN_PROFILE);
-        storage.remove(PREF_APP_CACHE_WORK_PROFILE);
-    }
-
-    private static String cachePreference(boolean isRemote) {
-        return isRemote ? PREF_APP_CACHE_WORK_PROFILE : PREF_APP_CACHE_MAIN_PROFILE;
-    }
-
-    private static List<ApplicationInfoWrapper> loadPersistentCache(boolean isRemote) {
-        String encoded = LocalStorageManager.getInstance().getString(cachePreference(isRemote));
-        if (encoded == null) return null;
-
-        Parcel parcel = Parcel.obtain();
-        try {
-            byte[] data = Base64.decode(encoded, Base64.NO_WRAP);
-            parcel.unmarshall(data, 0, data.length);
-            parcel.setDataPosition(0);
-            List<ApplicationInfoWrapper> apps = parcel.createTypedArrayList(ApplicationInfoWrapper.CREATOR);
-            return apps == null ? new ArrayList<>() : apps;
-        } catch (RuntimeException e) {
-            // A cache from an incompatible app or Android version is disposable.
-            LocalStorageManager.getInstance().remove(cachePreference(isRemote));
-            return null;
-        } finally {
-            parcel.recycle();
-        }
-    }
-
-    private static void savePersistentCache(boolean isRemote, List<ApplicationInfoWrapper> apps) {
-        Parcel parcel = Parcel.obtain();
-        try {
-            parcel.writeTypedList(apps);
-            LocalStorageManager.getInstance().setString(cachePreference(isRemote),
-                    Base64.encodeToString(parcel.marshall(), Base64.NO_WRAP));
-        } finally {
-            parcel.recycle();
-        }
-    }
-
-    private void removeAppFromList(ApplicationInfoWrapper app) {
-        if (mAdapter == null) return;
-        List<ApplicationInfoWrapper> cached = sAppCache.get(mIsRemote);
-        if (cached == null) return;   // nothing cached to correct; the refresh below covers us
-        cached.removeIf((it) -> it.getPackageName().equals(app.getPackageName()));
-        savePersistentCache(mIsRemote, cached);
-        mAdapter.setData(cached);
-    }
-
-    private void updateAppHiddenState(ApplicationInfoWrapper app, boolean hidden) {
-        // Update in-place; the same object is referenced by the adapter list and the static cache
-        app.setHidden(hidden);
-        List<ApplicationInfoWrapper> cached = sAppCache.get(mIsRemote);
-        if (cached != null) savePersistentCache(mIsRemote, cached);
-        mAdapter.notifyDataSetChanged();
-    }
-
     void refresh() {
         if (mAdapter == null) return;
-        if (mRefreshing) {
-            mRefreshPending = true;
-            return;
-        }
+        if (mRefreshing) return;
         if (mAdapter.isMultiSelectMode()) {
             mSwipeRefresh.setRefreshing(false);
             return; // Disallow refreshing when we are multi-selecting
@@ -326,27 +240,20 @@ public class AppListFragment extends BaseFragment {
                                 LocalStorageManager.PREF_AUTO_FREEZE_LIST_WORK_PROFILE,
                                 apps);
                     }
-                    // Store in static cache
                     runOnUiThread(() -> {
                         // A timed-out request may still complete after the services have been
-                        // restarted. Do not let that old result overwrite a newer list.
+                        // restarted. Do not let that old result replace a newer list.
                         if (refreshId != mRefreshId) return;
                         mHandler.removeCallbacks(mRefreshTimeout);
-                        sAppCache.put(mIsRemote, new ArrayList<>(apps));
-                        savePersistentCache(mIsRemote, apps);
                         mSwipeRefresh.setRefreshing(false);
                         mAdapter.setData(apps);
                         mRefreshing = false;
-                        if (mRefreshPending) {
-                            mRefreshPending = false;
-                            refresh();
-                        }
                     });
                 }
             }, ((MainActivity) getActivity()).mShowAll);
         } catch (RemoteException e) {
-            // A dead cross-profile binder used to leave mRefreshing true forever. Rebuild
-            // both bindings so the work-profile service is started again.
+            // The work-profile process has been stopped. Rebuild both bindings so its
+            // service is started again, instead of leaving the tab loading forever.
             runOnUiThread(this::onRefreshFailed);
         }
     }
@@ -357,7 +264,6 @@ public class AppListFragment extends BaseFragment {
         if (mRefreshTimeout != null) mHandler.removeCallbacks(mRefreshTimeout);
         mRefreshTimeout = null;
         mRefreshing = false;
-        mRefreshPending = false;
         if (mSwipeRefresh != null) mSwipeRefresh.setRefreshing(false);
 
         Activity activity = getActivity();
@@ -504,7 +410,7 @@ public class AppListFragment extends BaseFragment {
                 }
                 Toast.makeText(getContext(),
                         getString(R.string.freeze_success, mSelectedApp.getLabel()), Toast.LENGTH_SHORT).show();
-                updateAppHiddenState(mSelectedApp, true);
+                refresh();
                 return true;
             case MENU_ITEM_UNFREEZE:
                 try {
@@ -514,7 +420,7 @@ public class AppListFragment extends BaseFragment {
                 }
                 Toast.makeText(getContext(),
                         getString(R.string.unfreeze_success, mSelectedApp.getLabel()), Toast.LENGTH_SHORT).show();
-                updateAppHiddenState(mSelectedApp, false);
+                refresh();
                 return true;
             case MENU_ITEM_LAUNCH:
                 // LAUNCH and UNFREEZE_AND_LAUNCH share the same ID
@@ -607,17 +513,6 @@ public class AppListFragment extends BaseFragment {
             String message = getString(isInstall ? R.string.clone_success : R.string.uninstall_success);
             message = String.format(message, app.getLabel());
             Toast.makeText(getContext(), message, Toast.LENGTH_SHORT).show();
-            if (!isInstall) {
-                // Drop it from our own list right away instead of re-reading PackageManager,
-                // which publishes removals asynchronously and would happily hand back a list
-                // that still contains the app we just removed.
-                removeAppFromList(app);
-            }
-            // The change lands in the other profile, whose fragment may not be alive to hear
-            // the broadcast -- ViewPager2 need not keep the other page around. Its cached list
-            // would then still be the pre-clone one when the user switches to that tab, so drop
-            // the caches and let whoever is alive rebuild through the broadcast.
-            clearCache();
             LocalBroadcastManager.getInstance(getContext())
                     .sendBroadcast(new Intent(BROADCAST_REFRESH));
         } else if (result == ShelterService.RESULT_CANNOT_INSTALL_SYSTEM_APP) {

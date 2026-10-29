@@ -19,13 +19,14 @@ Fixes
 
   The request carries a `PendingIntent`, whose creator package and uid are stamped by the system and cannot be forged, so the profile can verify the request really comes from its own installation before offering anything -- the same trick Insular (the Island fork) uses for its cross-profile shuttle. The key travels back through that same `PendingIntent`, reaching only the component the requester named, and replies must carry a single-use nonce that never leaves the main profile.
 
+- **The work profile tab stuck on its loading indicator.** Left unused long enough, a refresh could hang for good: the cross-profile call either threw because the work-profile process had been stopped, or was accepted and never answered, and in both cases the request stayed marked active so every later refresh returned early. Failures are now detected, a request that goes unanswered times out, and recovery recreates the activity to obtain fresh service binders.
+
 - **Operations silently doing nothing after the activity is recreated.** `ShelterService` outlives `MainActivity` and held a proxy to the destroyed instance, so uninstall and clone died inside the service with `DeadObjectException` -- which cannot cross back over the binder, leaving the caller waiting for a callback that never came. The proxy is now re-registered on resume, and a dead one reports failure instead of hanging.
 
 Additions & behaviour changes
 ---
 
 - Work profile tab is first and selected on startup; swiping between tabs is disabled (stray swipes are easy to trigger one-handed on a device with a keyboard).
-- App list is cached on disk, with an explicit **Refresh** button in the toolbar, so returning to Shelter or switching tabs does not re-read PackageManager every time, even after Android stops the app. Refresh it when apps or their frozen state have changed outside Shelter.
 - **Batch Unfreeze** toolbar button, unfreezing everything that is frozen -- not just the auto-freeze list, so apps frozen by hand are included.
 
 Build

@@ -55,7 +55,6 @@
 
     <!-- Action Bar Options Menu -->
     <string name="search">Search</string>
-    <string name="refresh">Refresh</string>
     <string name="freeze_all">Batch Freeze</string>
     <string name="unfreeze_all">Batch Unfreeze</string>
     <string name="create_freeze_all_shortcut">Create Batch Freeze Shortcut</string>
